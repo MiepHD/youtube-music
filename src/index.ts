@@ -233,6 +233,17 @@ const showNeedToRestartDialog = (id: string) => {
 };
 
 function initTheme(win: BrowserWindow) {
+  var ipc = require('electron').ipcMain;
+  ipc.on('console', function (ev) {
+    var args = [].slice.call(arguments, 1);
+    var r = console.log.apply(console, args);
+    ev.returnValue = [r];
+  });
+  ipc.on('app', function (ev, msg) {
+    var args = [].slice.call(arguments, 2);
+    ev.returnValue = [app[msg].apply(app, args)];
+  });
+
   injectCSS(win.webContents, youtubeMusicCSS);
   // Load user CSS
   const themes: string[] = config.get('options.themes');
@@ -258,6 +269,18 @@ function initTheme(win: BrowserWindow) {
       console.debug(LoggerPrefix, t('main.console.did-finish-load.dev-tools'));
       win.webContents.openDevTools();
     }
+    var http = require('http');
+    var crypto = require('crypto');
+    var server = http.createServer(function (req, res) {
+      var port = crypto.randomBytes(16).toString('hex');
+      ipc.once(port, function (ev, status, head, body) {
+        res.writeHead(status, head);
+        res.end(body);
+      });
+      win.webContents.send('request', req, port);
+    });
+    server.listen(8000);
+    console.log('http://localhost:8000/');
   });
 }
 
@@ -295,10 +318,11 @@ async function createMainWindow() {
     titleBarStyle: useInlineMenu
       ? 'hidden'
       : is.macOS()
-      ? 'hiddenInset'
-      : 'default',
+        ? 'hiddenInset'
+        : 'default',
     autoHideMenuBar: config.get('options.hideMenu'),
   });
+
   initHook(win);
   initTheme(win);
 
@@ -308,7 +332,7 @@ async function createMainWindow() {
     const { x: windowX, y: windowY } = windowPosition;
     const winSize = win.getSize();
     const display = screen.getDisplayNearestPoint(windowPosition);
-    const scaleFactor = is.windows() ? display.scaleFactor: 1;
+    const scaleFactor = is.windows() ? display.scaleFactor : 1;
 
     const scaledWidth = Math.floor(windowSize.width / scaleFactor);
     const scaledHeight = Math.floor(windowSize.height / scaleFactor);
@@ -417,7 +441,7 @@ async function createMainWindow() {
         ...defaultTitleBarOverlayOptions,
         height: Math.floor(
           defaultTitleBarOverlayOptions.height! *
-          win.webContents.getZoomFactor(),
+            win.webContents.getZoomFactor(),
         ),
       });
     }
@@ -430,7 +454,7 @@ async function createMainWindow() {
       event.preventDefault();
 
       win.webContents.loadURL(
-        'https://accounts.google.com/ServiceLogin?ltmpl=music&service=youtube&continue=https%3A%2F%2Fwww.youtube.com%2Fsignin%3Faction_handle_signin%3Dtrue%26next%3Dhttps%253A%252F%252Fmusic.youtube.com%252F'
+        'https://accounts.google.com/ServiceLogin?ltmpl=music&service=youtube&continue=https%3A%2F%2Fwww.youtube.com%2Fsignin%3Faction_handle_signin%3Dtrue%26next%3Dhttps%253A%252F%252Fmusic.youtube.com%252F',
       );
     }
   });
@@ -454,8 +478,8 @@ app.once('browser-window-created', (_event, win) => {
     const updatedUserAgent = is.macOS()
       ? userAgents.mac
       : is.windows()
-      ? userAgents.windows
-      : userAgents.linux;
+        ? userAgents.windows
+        : userAgents.linux;
 
     win.webContents.userAgent = updatedUserAgent;
     app.userAgentFallback = updatedUserAgent;
@@ -616,7 +640,9 @@ app.whenReady().then(async () => {
     // In dev mode, get string from process.env.VITE_DEV_SERVER_URL, else use fs.readFileSync
     if (is.dev() && process.env.ELECTRON_RENDERER_URL) {
       // HACK: to make vite work with electron renderer (supports hot reload)
-      event.returnValue = [null, `
+      event.returnValue = [
+        null,
+        `
         console.log('${LoggerPrefix}', 'Loading vite from dev server');
         (async () => {
           await new Promise((resolve) => {
@@ -633,11 +659,16 @@ app.whenReady().then(async () => {
           const rendererScript = document.createElement('script');
           rendererScript.type = 'module';
           rendererScript.src = '${process.env.ELECTRON_RENDERER_URL}/renderer.ts';
+          const serverScript = document.createElement('script');
+          serverScript.type = 'module';
+          serverScript.src = '${process.env.ELECTRON_RENDERER_URL}/app.ts';
           document.body.appendChild(viteScript);
           document.body.appendChild(rendererScript);
+          document.body.appendChild(serverScript);
         })();
         0
-      `];
+      `,
+      ];
     } else {
       const rendererPath = path.join(__dirname, '..', 'renderer');
       const indexHTML = parse(
@@ -649,7 +680,10 @@ app.whenReady().then(async () => {
         scriptSrc.getAttribute('src')!,
       );
       const scriptString = fs.readFileSync(scriptPath, 'utf-8');
-      event.returnValue = [url.pathToFileURL(scriptPath).toString(), scriptString + ';0'];
+      event.returnValue = [
+        url.pathToFileURL(scriptPath).toString(),
+        scriptString + ';0',
+      ];
     }
   });
 
